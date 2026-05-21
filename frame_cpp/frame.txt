@@ -1,0 +1,42 @@
+mainwindow.cpp
+void MainWindow::showImage(QImage img)
+// ==================== 抽帧外科手术代码开始 ====================
+    static int frameCount = 0; // 总帧数计数器
+    
+    // 每隔 5 帧抽一张（数字 5 可以根据你视频的帧率随便改）
+    if (frameCount % 5 == 0) { 
+        // 注意后缀改成了 .png
+        QString savePath = QString("F:/experimental_data/mend26s/raw_data/frame_%1.png").arg(frameCount, 6, 10, QChar('0'));
+        img.save(savePath, "PNG"); // 强行以 PNG 无损格式保存！
+    }
+    frameCount++; 
+    // ==================== 抽帧外科手术代码结束 ====================
+
+
+fileread.cpp
+while (m_runFlag)
+    {
+        if (m_startFlag) {
+            
+            // ==================== 斩断无限循环的外科手术 ====================
+            if (m_curFramePosInd >= m_framePos.size()) {
+                // m_curFramePosInd = 0;  // 把原厂这行流氓代码直接删掉或注释掉！
+                
+                m_startFlag = false;      // 强行将播放状态改为“停止”，拉起手刹！
+                
+                // 在输出窗口疯狂报警，提醒你拔管
+                qDebug() << "\n=======================================================";
+                qDebug() << ">>> 警报：当前 DB 文件已全部播完，已自动切断数据流！";
+                qDebug() << ">>> 抽帧彻底结束，不会再有重复图片！";
+                qDebug() << ">>> 请立刻关闭当前软件，准备加载下一个数据！";
+                qDebug() << "=======================================================\n";
+                
+                continue; // 忽略下面的动作，直接进入静默挂机状态
+            }
+            // ================================================================
+
+            getOneFrameIntoBuf();
+            m_curFramePosInd++;
+            std::this_thread::sleep_for(std::chrono::milliseconds(int(100)));
+        }
+    }
