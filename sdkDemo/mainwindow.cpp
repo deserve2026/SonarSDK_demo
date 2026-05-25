@@ -1,6 +1,11 @@
 ﻿#include "mainwindow.h"
-#include "./ui_mainwindow.h"
+#include "ui_mainwindow.h"
 #include <QDateTime>
+#include <QMessageBox>              // 👈 必须加：为了让你刚才写的弹窗测试代码正常工作
+#include <QFileDialog>             // 👈 必须加：为了让用户点击按钮时能弹出路径选择框
+#include <QInputDialog>            // 👈 必须加：为了导出时设置抽帧间隔
+#include <opencv2/opencv.hpp>       // 👈 必须加：为了让你写的 YOLO 和图像处理代码起作用
+#include <onnxruntime_cxx_api.h>    // 👈 必须加：为了让 ONNX 推理模型代码起作用
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -10,6 +15,15 @@ MainWindow::MainWindow(QWidget *parent)
     , getWorkMode(0)
 {
     ui->setupUi(this);
+
+    // 换成这种现代 C++ 语法，百分之百不会引发编译器的宏定义报错！
+    connect(ui->pushButton, &QPushButton::clicked, this, &MainWindow::on_btn_select_path_clicked);
+
+    m_savePngPath = "";
+    m_savedImageCount = 0;
+    m_frameCounter = 0;
+    m_frameInterval = 3;
+    m_lastSaveTime = 0;
 
     // ==================== YOLO 大脑通电点火 ====================
     try {
@@ -112,6 +126,13 @@ MainWindow::MainWindow(QWidget *parent)
     playback_btn->resize(100,40);
     connect(playback_btn, &QPushButton::clicked, this, &MainWindow::playStart);
 
+    export_png_btn = new QPushButton(this);
+    export_png_btn->move(830, 600);
+    export_png_btn->setText("Export PNG");
+    export_png_btn->resize(100, 40);
+    export_png_btn->setEnabled(false);
+    connect(export_png_btn, &QPushButton::clicked, this, &MainWindow::on_export_png_clicked);
+
     save_btn = new QPushButton(this);
     save_btn->move(720,550);
     save_btn->setText("Save");
@@ -192,8 +213,10 @@ void MainWindow::playStart()
 
         if(!filePath.isEmpty()) {
             // Selected file
+            m_currentDbFile = filePath; // Store DB file path for export
             playback_btn->setText("Stop");
             m_connectPBtn->setEnabled(false);
+            export_png_btn->setEnabled(true);
 
             if(m_fileRead->f_readFile(filePath)){
                 // File opened successfully
@@ -262,22 +285,17 @@ void MainWindow::showImage(QImage img)
     // 强行把传进来的原始图像翻转！参数1: 水平不翻转(false)；参数2: 垂直翻转(true)
     img = img.mirrored(false, true);
     // ======================================================
-    // ==================== 按“绝对时间”抽帧的外科手术 ====================
-    static int savedImageCount = 0; // 记录总共保存了多少张图
-    static qint64 lastSaveTime = 0; // 记录上一次保存图片的时间戳
-
-    qint64 currentTime = QDateTime::currentMSecsSinceEpoch(); // 获取当前真实时间（毫秒）
-
-    // 500 表示 500 毫秒（即 0.5 秒）。这个数值你可以根据鱼游动的速度自己改。
-    // 如果大于 500 毫秒，就存一张图
-    if (currentTime - lastSaveTime >= 3000) {
-        // 强制使用 PNG 无损格式，保留最原始的像素点喂给 YOLO！
-        QString savePath = QString("F:/experimental_data/mend26s/raw_data/frame_%1.png").arg(savedImageCount++, 6, 10, QChar('0'));
-        img.save(savePath, "PNG");
-
-        lastSaveTime = currentTime; // 更新上一次保存的时间
+// ==================== 基于帧间隔的抽帧保存（上下翻转后） ====================
+    if (!m_savePngPath.isEmpty()) {
+        m_frameCounter++;
+        if (m_frameCounter % m_frameInterval == 0) {
+            QString savePath = QString("%1/frame_%2.png")
+                .arg(m_savePngPath)
+                .arg(m_savedImageCount++, 6, 10, QChar('0'));
+            img.save(savePath, "PNG");
+        }
     }
-    // ==================== 抽帧外科手术代码结束 ====================
+    // ==================== 抽帧保存结束 ====================
 
     // ==================== YOLO 拦截手术区 (计数功能将在这里诞生) ====================
 
@@ -797,3 +815,190 @@ void MainWindow::changeWorkMode(int index)
     sendCMDReturn("Working Mode", ret);
 }
 
+void MainWindow::on_btn_select_path_clicked()
+{
+    QString dir = QFileDialog::getExistingDirectory(this, "请选择保存PNG的文件夹", "./");
+    if (!dir.isEmpty()) {
+        m_savePngPath = dir;
+        m_savedImageCount = 0;
+        m_frameCounter = 0;
+        qDebug() << ">>> 用户成功选择保存路径：" << m_savePngPath;
+
+        // 询问抽帧间隔，默认值为3，如果取消则保持默认3
+        bool ok = false;
+        int interval = QInputDialog::getInt(this, "抽帧间隔",
+            "每隔多少帧保存一张（默认3帧）：", 3, 1, 1000, 1, &ok);
+        if (ok) {
+            m_frameInterval = interval;
+        } else {
+            m_frameInterval = 3;
+        }
+        qDebug() << ">>> 抽帧间隔设置为：" << m_frameInterval;
+    }
+}
+
+void MainWindow::on_export_png_clicked()
+{
+    // 1. 选择保存目录
+    QString dir = QFileDialog::getExistingDirectory(this, "Select folder to save PNG images",
+        m_savePngPath.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::DesktopLocation) : m_savePngPath);
+    if (dir.isEmpty()) return;
+    m_savePngPath = dir;
+
+    // 2. 确定要读取的DB文件
+    QString dbFile = m_currentDbFile;
+    if (dbFile.isEmpty()) {
+        dbFile = QFileDialog::getOpenFileName(this, "Select DB file",
+            QStandardPaths::writableLocation(QStandardPaths::DesktopLocation), "Data format(*.DB)");
+    }
+    if (dbFile.isEmpty()) return;
+
+    // 3. 设置抽帧间隔
+    bool ok = false;
+    int frameInterval = QInputDialog::getInt(this, "Frame interval",
+        "Export every N frames (1 = export all):", 1, 1, 1000, 1, &ok);
+    if (!ok) return;
+
+    // 4. 打开DB文件
+    std::ifstream ifs(dbFile.toStdString(), std::ifstream::binary);
+    if (!ifs.is_open()) {
+        QMessageBox::warning(this, "Error", "Cannot open DB file:\n" + dbFile);
+        return;
+    }
+
+    uint16_t PACK_SIZE = LhForwardSDK::LhForwardFrame::PACK_SIZE;
+
+    // 5. 扫描所有帧位置
+    std::vector<unsigned int> framePos;
+    packageInfo curHead, *headPtr;
+    memset(&curHead, 0, sizeof(packageInfo));
+    char *scanBuf = new char[PACK_SIZE];
+
+    while (!ifs.eof()) {
+        ifs.read(scanBuf, PACK_SIZE);
+        if (ifs.gcount() < (std::streamsize)PACK_SIZE) break;
+        headPtr = (packageInfo*)scanBuf;
+        if (headPtr->frameSerialNum != curHead.frameSerialNum) {
+            framePos.push_back((unsigned int)ifs.tellg() - PACK_SIZE);
+            memcpy(&curHead, headPtr, sizeof(packageInfo));
+        }
+    }
+    ifs.clear();
+    ifs.seekg(0, std::ios::beg);
+    delete[] scanBuf;
+
+    if (framePos.empty()) {
+        QMessageBox::warning(this, "Error", "No frames found in DB file.");
+        ifs.close();
+        return;
+    }
+
+    // 5. 初始化解码器
+    LhForwardSDK::LhForwardFrame *lfFrame = new LhForwardSDK::LhForwardFrame(PACK_SIZE);
+    LhForwardSDK::LhForwardImage *lfImage = new LhForwardSDK::LhForwardImage(IMAGE_WIDTH, IMAGE_HEIGHT);
+    uint8_t *frameDataBuf = new uint8_t[PACK_SIZE * PACK_MAX_NUM];
+    double *intensity = new double[PACK_MAX_NUM * PACK_SIZE];
+    uchar *panSectorMemory = new uchar[(uint64_t)PACK_MAX_NUM * PACK_SIZE];
+
+    int totalFrames = (int)framePos.size();
+    int exportedCount = 0;
+    m_savedImageCount = 0;
+
+    qDebug() << ">>> Export started: total" << totalFrames << "frames, interval:" << frameInterval;
+
+    // 6. 逐帧处理（按间隔抽取）
+    for (int i = 0; i < totalFrames; i += frameInterval) {
+        // 获取帧数据范围
+        unsigned int startPos = framePos[i];
+        unsigned int stopPos;
+        if (i == totalFrames - 1) {
+            ifs.seekg(0, std::ios::end);
+            stopPos = ifs.tellg();
+        } else {
+            stopPos = framePos[i + 1];
+        }
+        int frameSize = stopPos - startPos;
+
+        // 读取整帧数据
+        char *frameRawData = new char[frameSize];
+        ifs.seekg(startPos, std::ios::beg);
+        ifs.read(frameRawData, frameSize);
+
+        // 逐包喂入LhForwardFrame进行帧组装
+        int numPacks = frameSize / PACK_SIZE;
+        for (int j = 0; j < numPacks; j++) {
+            int ret = lfFrame->writeOnePackData((uint8_t*)&frameRawData[j * PACK_SIZE]);
+            if (ret == LhForwardSDK::LhForwardFrame::oneFrameOK) {
+                packageInfo curFrameInfo;
+                lfFrame->getOneFrame(&curFrameInfo, frameDataBuf);
+
+                QImage tempImg;
+
+                // 根据packType解码
+                if (curFrameInfo.packType == 0) {
+                    // 波束数据：扇形插值成像
+                    double imageRes = 0;
+                    int panSize = IMAGE_WIDTH > IMAGE_HEIGHT ? IMAGE_WIDTH : IMAGE_HEIGHT;
+                    int lwidth = IMAGE_WIDTH;
+                    int lheight = IMAGE_HEIGHT;
+                    if (360 == curFrameInfo.horAngleReso) {
+                        lwidth = panSize;
+                        lheight = panSize;
+                    }
+                    memset(panSectorMemory, 0, (size_t)(panSize * panSize));
+                    lfImage->generateForwardImage(curFrameInfo, frameDataBuf, panSectorMemory, imageRes);
+                    tempImg = QImage(panSectorMemory, lwidth, lheight, QImage::Format_Grayscale8);
+                }
+                else if (curFrameInfo.packType == 2) {
+                    // 未压缩数据
+                    lfImage->preprocessData(curFrameInfo, frameDataBuf, intensity);
+                    int coef = 256;
+                    if (curFrameInfo.dataWidth == 0x00) coef = 1;
+                    for (size_t k = 0; k < (size_t)curFrameInfo.numPerRow * curFrameInfo.dataHeight; k++) {
+                        frameDataBuf[k] = intensity[k] / coef;
+                    }
+                    tempImg = QImage(frameDataBuf, curFrameInfo.numPerRow, curFrameInfo.dataHeight, QImage::Format_Grayscale8);
+                }
+                else if (curFrameInfo.packType == 3) {
+                    // PNG压缩数据
+                    tempImg.loadFromData(frameDataBuf, curFrameInfo.dataHeight, "png");
+                }
+                else if (curFrameInfo.packType == 4) {
+                    // JPG压缩数据
+                    tempImg.loadFromData(frameDataBuf, curFrameInfo.dataHeight, "jpg");
+                }
+
+                if (!tempImg.isNull()) {
+                    // 上下翻转
+                    tempImg = tempImg.mirrored(false, true);
+
+                    // 保存为PNG
+                    QString savePath = QString("%1/frame_%2.png")
+                        .arg(m_savePngPath)
+                        .arg(exportedCount++, 6, 10, QChar('0'));
+                    tempImg.save(savePath, "PNG");
+                }
+            }
+        }
+
+        delete[] frameRawData;
+
+        // 重置解码器状态，准备下一帧
+        lfFrame->init();
+    }
+
+    // 7. 清理资源
+    delete[] frameDataBuf;
+    delete[] intensity;
+    delete[] panSectorMemory;
+    delete lfFrame;
+    delete lfImage;
+    ifs.close();
+
+    m_savedImageCount = exportedCount;
+
+    qDebug() << ">>> Export complete:" << exportedCount << "frames saved to" << m_savePngPath;
+
+    QMessageBox::information(this, "Export Complete",
+        QString("Successfully exported %1 frames to:\n%2").arg(exportedCount).arg(m_savePngPath));
+}

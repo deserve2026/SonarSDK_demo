@@ -9,6 +9,8 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+add_compile_definitions(USE_WINDOWS)
+
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network)
 
@@ -30,45 +32,38 @@ set(PROJECT_SOURCES
         AvoidCollision.h
 )
 
-# ================= YOLO ÒÀÀµ£º°üº¬Ä¿Â¼ =================
-include_directories("D:/Cpp_Libraries/opencv-4.12.0-win/opencv/build/include") 
-include_directories("D:/Cpp_Libraries/onnxruntime-win-x64-gpu-1.20.0/include")
-# =======================================================
+# ================= ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ YOLO ï¿½ï¿½ï¿½ï¿½ï¿½ß¼ï¿½ =================
+# 1. ï¿½Ô¶ï¿½Ñ°ï¿½ï¿½ OpenCV (ï¿½ï¿½ï¿½ÏµÍ³Ã»ï¿½ä»·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È·ï¿½Ä°ï¿½×°Â·ï¿½ï¿½)
+set(OpenCV_DIR "D:/Cpp_Libraries/opencv-4.12.0-win/opencv/build")
+find_package(OpenCV REQUIRED)
+include_directories(${OpenCV_INCLUDE_DIRS})
 
-# ================= YOLO ÒÀÀµ£º¿âÄ¿Â¼ =================
-link_directories("D:/Cpp_Libraries/opencv-4.12.0-win/opencv/build/x64/vc16/lib")
-link_directories("D:/Cpp_Libraries/onnxruntime-win-x64-gpu-1.20.0/lib")
-# =====================================================
+# 2. ONNX Runtime Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½Ö±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ôºï¿½ï¿½Þ¸ï¿½)
+set(ONNX_ROOT "D:/Cpp_Libraries/onnxruntime-win-x64-gpu-1.20.0")
+include_directories(${ONNX_ROOT}/include)
+link_directories(${ONNX_ROOT}/lib)
+# =======================================================
 
 # add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
 add_executable(${PROJECT_NAME} #[[WIN32]] ${PROJECT_SOURCES})
 
-# Add third-party libraries
-target_link_libraries(${PROJECT_NAME} debug LhForwardSDK_X64d #[[libpng16_staticd zlibstaticd]])
-target_link_libraries(${PROJECT_NAME} optimized LhForwardSDK_X64 #[[libpng16_static zlibstatic]])
 
-set_target_properties(LhSonarSDKGuiDemo PROPERTIES
-    MACOSX_BUNDLE_GUI_IDENTIFIER my.example.com
-    MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-    MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
-    MACOSX_BUNDLE TRUE
-    WIN32_EXECUTABLE TRUE
+# ================= Í³Ò»ï¿½ï¿½ï¿½Ó¿ï¿½ï¿½ï¿½ï¿½ï¿½ =================
+# ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ÐµÄ¿ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    # 1. ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Óµï¿½ Qt ï¿½ï¿½
+    Qt${QT_VERSION_MAJOR}::Widgets 
+    Qt${QT_VERSION_MAJOR}::Network
+    
+    # 2. ï¿½ï¿½ï¿½ï¿½ SDK (ï¿½ï¿½ï¿½ï¿½ Debug ï¿½ï¿½ Release)
+    debug LhForwardSDK_X64d
+    optimized LhForwardSDK_X64
+    
+    # 3. OpenCV ï¿½ï¿½ ONNX (Ê¹ï¿½ï¿½ CMake ï¿½Òµï¿½ï¿½Ä±ï¿½ï¿½ï¿½)
+    ${OpenCV_LIBS}
+    onnxruntime
+    
+    # 4. Windows ï¿½ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½Ö¹ï¿½ï¿½ï¿½Ó´ï¿½ï¿½ï¿½)
+    ws2_32
 )
-
-if(CMAKE_SYSTEM_NAME MATCHES "Linux")
-    add_definitions(-DUSE_LINUX=1)
-    add_definitions(-std=c++17)
-    target_link_libraries(${PROJECT_NAME} Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network -lpthread)
-else()
-    target_link_libraries(${PROJECT_NAME} ws2_32 Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network opencv_world4120.lib onnxruntime.lib)
-    # add_definitions(-DDLL_EXPORTS)
-    add_definitions(-DUSE_WINDOWS=1)
-endif()
-
-install(TARGETS LhSonarSDKGuiDemo
-    BUNDLE DESTINATION .
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
-
-# if(QT_VERSION_MAJOR EQUAL 6)
-#     qt_finalize_executable(LhSonarSDKGuiDemo)
-# endif()
+# =================================================
